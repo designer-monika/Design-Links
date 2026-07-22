@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Overlay Screen</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: #c7cddb;   /* backdrop shown around the phone view on wide screens */
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
+
+    display: flex;
+    justify-content: center;
+    align-items: stretch;
+  }
+
+  /* ---- App: flexible below 440px, capped mobile-view above ---- */
+  .screen {
+    position: relative;
+    width: 100%;
+    max-width: 440px;          /* laptop: locked to a 440px mobile view */
+    height: 100vh;
+    height: 100dvh;            /* full device height, auto-adjusts */
+    background: #000;          /* black area revealed when the app slides up */
+    overflow: hidden;
+  }
+
+  /* the whole app UI (header + content + footer) slides up as ONE unit */
+  .app-frame {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    background: #eef1f8;
+    z-index: 2;
+  }
+  /* app screen stays put — no slide */
+
+  .app-header { flex: none; }
+  .app-header img { display: block; width: 100%; }
+  .app-content {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;   /* native momentum scroll */
+  }
+  .app-content .content-img { display: block; width: 100%; }
+  .app-footer { flex: none; }
+  .app-footer img { display: block; width: 100%; }
+
+
+  /* ---- Overlay: dark vignette + central bloom ---- */
+  .overlay {
+    position: absolute;
+    inset: 0;
+    background: transparent;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.7s ease;
+    z-index: 10;
+
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .overlay.play { opacity: 1; visibility: visible; }
+
+  /* dark backdrop (fades out in phase 2, while the icon keeps flying) */
+  .overlay-bg {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(179deg,
+                  rgba(0, 0, 0, 0.00) 19.22%,
+                  rgba(0, 0, 0, 0.80) 41.74%,
+                  #000 68.23%);
+
+    transition: opacity 0.6s ease;
+  }
+  /* dark backdrop stays in phase 2 (no slide-up panel) */
+
+  /* content block, sits below center */
+  .content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transform: translateY(150px);
+    width: 100%;
+  }
+
+  /* icon on top, text below */
+  .stage    { order: 1; }
+  .ai-text  { order: 2; }
+
+  /* ---- Heading (below the icon) ---- */
+  .ai-text {
+    position: relative;
+    text-align: center;
+    padding: 0 20px;
+    margin-top: 28px;
+    width: 100%;
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  .overlay.play .ai-text {
+    animation: textIn 0.7s ease forwards;
+    animation-delay: 0.9s;      /* appears after the icon lands */
+  }
+  .ai-text .headline-sm {
+    color: #fff;
+    font-size: 24px;
+    font-weight: 600;
+    line-height: 120%;
+  }
+  .ai-text .headline-lg {
+    color: #fff;
+    font-size: 24px;
+    font-weight: 600;
+    line-height: 120%;
+    margin-top: 4px;
+  }
+
+  /* ---- Promo pill below the heading (text reveals left -> right) ---- */
+  .pill {
+    order: 3;
+    margin-top: 20px;
+    padding: 8px 40px;
+    background: linear-gradient(61deg, rgba(21, 40, 200, 0.10) 17.85%, rgba(135, 230, 237, 0.10) 106.27%), #080B16;
+    border-radius: 42px;
+    color: #87E6ED;
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 18px;
+    text-align: center;
+    box-shadow: 0 0 1px 0 #20C9FF inset,
+                0 0.565px 1.694px 0 rgba(49, 99, 255, 0.21),
+                0 3.387px 3.387px 0 rgba(49, 99, 255, 0.16),
+                0 9.032px 7.339px 0 rgba(49, 99, 255, 0.11),
+                0 29.919px 25.968px 0 rgba(49, 99, 255, 0.08),
+                0 46.29px 45.161px 0 rgba(49, 99, 255, 0.05);
+    opacity: 0;              /* hidden until revealed */
+    transition: opacity 0.5s ease;
+  }
+  /* inner wrapper carries the left->right reveal mask so the pill's
+     box-shadow is NEVER clipped by a mask (masks cut off outset shadows) */
+  .pill-text { display: inline-block; }
+  .pill b { color: #87E6ED; font-weight: 700; }
+  .pill .brand { color: #87E6ED; font-weight: 500; }
+
+  /* subtext below the pill */
+  .subtext {
+    order: 4;
+    margin-top: 12px;
+    color: #87E6ED;
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    text-align: center;
+    opacity: 0;              /* fades in after the pill */
+    transition: opacity 0.6s ease;
+  }
+  .subtext.show { opacity: 1; }
+
+  /* pill box + shadow simply fade in (no mask here, so shadow is preserved) */
+  .pill.reveal { opacity: 1; }
+
+  /* left -> right reveal runs on the TEXT only, via a soft-edged mask */
+  .pill.reveal .pill-text {
+    -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 45%, rgba(0,0,0,0) 78%);
+            mask-image: linear-gradient(90deg, #000 0%, #000 45%, rgba(0,0,0,0) 78%);
+    -webkit-mask-size: 300% 100%;
+            mask-size: 300% 100%;
+    -webkit-mask-repeat: no-repeat;
+            mask-repeat: no-repeat;
+    -webkit-mask-position: 0 0;   /* resting state = fully visible */
+            mask-position: 0 0;
+    animation: revealLR 1.1s ease forwards;
+  }
+
+  /* disappear text: letters dissolve one-by-one, right -> left (blur + fade) */
+  .dt-char { display: inline-block; white-space: pre; }
+  .dt-char.go { animation: dtDissolve .4s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+
+  /* ---- Icon stage ---- */
+  .stage {
+    position: relative;
+    z-index: 2;
+    width: 90px;
+    height: 90px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* icon: rise from the very bottom of the screen */
+  .ai-rise {
+    position: relative;
+    opacity: 0;
+    transform: translateY(460px) scale(0.4);
+  }
+  .overlay.play .ai-rise {
+    animation: riseUp 1.3s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  /* 70px window onto the icon; the shared SVG carries its own shadow */
+  .ai-spin {
+    position: relative;
+    z-index: 1;
+    width: 70px;
+    height: 70px;
+  }
+  .overlay.play .ai-spin {
+    animation: spin 4s linear 1s infinite;   /* continuous rotation, faster */
+  }
+  /* the icon graphic occupies the top-right of the shared 161x163 canvas;
+     offset it so the 70px icon sits in the box and its shadow spills out */
+  .ai-spin svg {
+    position: absolute;
+    width: 161px;
+    height: 163px;
+    left: -76.77px;
+    top: -1.13px;
+    display: block;
+    overflow: visible;
+  }
+
+  /* ---- Phase 2: bottom CTA (text + icon + buttons over the SAME overlay) ---- */
+  .cta {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    z-index: 6;
+    padding: 0 20px 50px;
+    display: flex;
+    flex-direction: column;
+    pointer-events: none;       /* inert during phase 1 */
+  }
+
+  .cta-row {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 26px;
+  }
+  .cta-text {
+    font-size: 24px;
+    font-weight: 600;
+    color: #fff;
+    line-height: 32px;
+    opacity: 0;                 /* fades in during phase 2 */
+  }
+  .cta-text span{ color:#87E6ED;}
+  .cta-icon { width: 40px; height: 40px; flex: none; }   /* landing slot for the flying icon (shrunk) */
+
+  .cta-buttons { display: flex; gap: 14px; opacity: 0; }  /* fades in during phase 2 */
+  .cta-buttons .btn {
+    padding: 12px 30px;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 16px;
+    font-family: inherit;
+    border: none;
+    cursor: pointer;
+      font-weight: 500;
+  }
+  .cta-buttons .btn-dismiss {
+    background: rgba(38,38,38,0.75);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.14);
+  }
+  .cta-buttons .btn-try {
+    background: #fff;
+    color: #000;
+  
+  }
+
+  /* Phase 2 transitions */
+  .screen.mode2 .overlay { pointer-events: none; }        /* stays visible so the flying icon shows */
+  /* phase-1 content hides automatically; only the icon moves down */
+  .screen.mode2 .ai-text,
+  .screen.mode2 .pill,
+  .screen.mode2 .subtext { animation: fadeOut 0.45s ease forwards; }
+  .screen.mode2 .cta-buttons { pointer-events: auto; }
+  .screen.mode2 .cta-text { animation: fadeIn 0.6s ease 0.7s forwards; }
+  .screen.mode2 .cta-buttons { animation: fadeIn 0.6s ease 0.7s forwards; }
+
+  /* ---- Keyframes ---- */
+  @keyframes riseUp {
+    0%   { opacity: 0; transform: translateY(460px) scale(0.4); }
+    50%  { opacity: 1; }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes spin {
+    0%   { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+  @keyframes emergeUp {   /* text grows out from behind the icon */
+    0%   { opacity: 0; transform: translateY(85px) scale(0.08); }
+    35%  { opacity: 1; }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes fadeIn {   /* simple fade, no movement */
+    0%   { opacity: 0; }
+    100% { opacity: 1; }
+  }
+  @keyframes fadeOut {
+    0%   { opacity: 1; transform: translateY(0); }
+    100% { opacity: 0; transform: translateY(0); }
+  }
+  @keyframes textIn {
+    0%   { opacity: 0; transform: translateY(10px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes revealLR {
+    from { -webkit-mask-position: 100% 0; mask-position: 100% 0; }
+    to   { -webkit-mask-position: 0 0;    mask-position: 0 0; }
+  }
+  @keyframes dtDissolve {
+    from { opacity: 1; filter: blur(0);   transform: translateX(0); }
+    to   { opacity: 0; filter: blur(6px); transform: translateX(5px); }
+  }
+</style>
+</head>
+<body>
+    <div class="screen" id="screen">
+
+      <!-- the full app UI (stays put — no slide) -->
+      <div class="app-frame" id="appFrame">
+      <div class="app-header"><img src="header.jpg" alt=""></div>
+      <div class="app-content" id="appContent">
+        <img src="frame_1.jpg" class="content-img" alt="">
+      </div>
+      <div class="app-footer"><img src="footer.jpg" alt=""></div>
+      </div>
+
+      <div class="overlay" id="overlay">
+       <div class="overlay-bg"></div>
+       <div class="content">
+
+        <div class="ai-text">
+          <div class="headline-sm">Don't wait</div>
+          <div class="headline-lg">Share website feedback!</div>
+        </div>
+
+        <div class="stage">
+          <div class="ai-rise">
+            <div class="ai-spin">
+              <!-- newai-icon.svg (shared asset, used as-is with its own shadow) -->
+              <svg width="161" height="163" viewBox="0 0 161 163" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <g filter="url(#filter0_ddddddi_139_1786)">
+                <path d="M76.7742 36.1292C76.7742 16.7992 92.4442 1.12915 111.774 1.12915V1.12915C131.104 1.12915 146.774 16.7992 146.774 36.1292V36.1292C146.774 55.4591 131.104 71.1292 111.774 71.1292V71.1292C92.4442 71.1292 76.7742 55.4591 76.7742 36.1292V36.1292Z" fill="url(#paint0_linear_139_1786)"/>
+                <path d="M76.7742 36.1292C76.7742 16.7992 92.4442 1.12915 111.774 1.12915V1.12915C131.104 1.12915 146.774 16.7992 146.774 36.1292V36.1292C146.774 55.4591 131.104 71.1292 111.774 71.1292V71.1292C92.4442 71.1292 76.7742 55.4591 76.7742 36.1292V36.1292Z" fill="url(#paint1_radial_139_1786)"/>
+                </g>
+                <g clip-path="url(#clip0_139_1786)">
+                <path d="M116.219 47.1165L119.45 49.6282L120.324 50.2825C116.94 54.3864 111.822 57.0344 106.075 57.135V51.9788C110.152 51.88 113.784 50.0068 116.212 47.1106L116.219 47.1165ZM128.132 38.0354C128.312 39.0702 128.408 40.1342 128.408 41.22C128.408 45.7342 126.782 49.8725 124.079 53.095L119.917 49.9768C121.959 47.6234 123.193 44.5644 123.193 41.22C123.193 40.5336 123.141 39.8591 123.041 39.2004L128.132 38.0354ZM95.1443 41.8987C97.593 45.2611 101.572 47.4593 106.073 47.4963V52.6536C99.9522 52.6172 94.5243 49.6917 91.114 45.1848L95.1443 41.8987ZM108.35 19.8401C104.625 21.5697 101.821 24.9209 100.871 28.9749L96.3835 27.887C96.1239 28.9252 95.9861 30.0115 95.9861 31.1292C95.9861 34.1091 96.9668 36.8625 98.6248 39.092L94.575 42.3469C92.1888 39.2276 90.7723 35.3422 90.7722 31.1292C90.7722 29.5887 90.9624 28.0919 91.3191 26.6604L95.8064 27.7463C97.142 22.1319 101.048 17.4988 106.229 15.1272L108.35 19.8401ZM122.562 24.0217C127.73 26.5048 131.575 31.2576 132.773 36.97L127.691 38.134C126.846 33.9264 124.017 30.4255 120.209 28.6252L122.562 24.0217ZM116.164 17.8987C119.148 17.8987 121.97 18.5869 124.476 19.8098L122.306 24.5032C120.461 23.5779 118.374 23.056 116.164 23.0559C114.093 23.056 112.13 23.5144 110.373 24.3333L108.252 19.6194C110.657 18.5154 113.338 17.8987 116.164 17.8987Z" fill="white"/>
+                <circle cx="111.774" cy="36.1292" r="5.25" fill="white"/>
+                </g>
+                <defs>
+                <filter id="filter0_ddddddi_139_1786" x="-2.86102e-05" y="0.000118017" width="160.323" height="162.581" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+                <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+                <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+                <feOffset dx="-31.6129" dy="46.2903"/>
+                <feGaussianBlur stdDeviation="22.5806"/>
+                <feComposite in2="hardAlpha" operator="out"/>
+                <feColorMatrix type="matrix" values="0 0 0 0 0.192157 0 0 0 0 0.388235 0 0 0 0 1 0 0 0 0.0509804 0"/>
+                <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_139_1786"/>
+                <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+                <feOffset dx="-20.3226" dy="29.9194"/>
+                <feGaussianBlur stdDeviation="12.9839"/>
+                <feComposite in2="hardAlpha" operator="out"/>
+                <feColorMatrix type="matrix" values="0 0 0 0 0.192157 0 0 0 0 0.388235 0 0 0 0 1 0 0 0 0.0823529 0"/>
+                <feBlend mode="normal" in2="effect1_dropShadow_139_1786" result="effect2_dropShadow_139_1786"/>
+                <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+                <feOffset dx="-11.8548" dy="17.5"/>
+                <feGaussianBlur stdDeviation="7.05645"/>
+                <feComposite in2="hardAlpha" operator="out"/>
+                <feColorMatrix type="matrix" values="0 0 0 0 0.192157 0 0 0 0 0.388235 0 0 0 0 1 0 0 0 0.129412 0"/>
+                <feBlend mode="normal" in2="effect2_dropShadow_139_1786" result="effect3_dropShadow_139_1786"/>
+                <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+                <feOffset dx="-6.20968" dy="9.03226"/>
+                <feGaussianBlur stdDeviation="3.66935"/>
+                <feComposite in2="hardAlpha" operator="out"/>
+                <feColorMatrix type="matrix" values="0 0 0 0 0.192157 0 0 0 0 0.388235 0 0 0 0 1 0 0 0 0.105882 0"/>
+                <feBlend mode="normal" in2="effect3_dropShadow_139_1786" result="effect4_dropShadow_139_1786"/>
+                <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+                <feOffset dx="-2.25806" dy="3.3871"/>
+                <feGaussianBlur stdDeviation="1.69355"/>
+                <feComposite in2="hardAlpha" operator="out"/>
+                <feColorMatrix type="matrix" values="0 0 0 0 0.192157 0 0 0 0 0.388235 0 0 0 0 1 0 0 0 0.160784 0"/>
+                <feBlend mode="normal" in2="effect4_dropShadow_139_1786" result="effect5_dropShadow_139_1786"/>
+                <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+                <feOffset dx="-0.564516" dy="0.564516"/>
+                <feGaussianBlur stdDeviation="0.846774"/>
+                <feComposite in2="hardAlpha" operator="out"/>
+                <feColorMatrix type="matrix" values="0 0 0 0 0.192157 0 0 0 0 0.388235 0 0 0 0 1 0 0 0 0.211765 0"/>
+                <feBlend mode="normal" in2="effect5_dropShadow_139_1786" result="effect6_dropShadow_139_1786"/>
+                <feBlend mode="normal" in="SourceGraphic" in2="effect6_dropShadow_139_1786" result="shape"/>
+                <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+                <feOffset dy="2.25806"/>
+                <feGaussianBlur stdDeviation="2.82258"/>
+                <feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/>
+                <feColorMatrix type="matrix" values="0 0 0 0 0.12549 0 0 0 0 0.788235 0 0 0 0 1 0 0 0 1 0"/>
+                <feBlend mode="normal" in2="shape" result="effect7_innerShadow_139_1786"/>
+                </filter>
+                <linearGradient id="paint0_linear_139_1786" x1="86.6908" y1="59.4625" x2="139.774" y2="14.5458" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#293FFF"/>
+                <stop offset="1" stop-color="#29FF7F"/>
+                </linearGradient>
+                <radialGradient id="paint1_radial_139_1786" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(97.0968 6.2098) rotate(77.2604) scale(66.5579)">
+                <stop stop-color="#83E9FF"/>
+                <stop offset="1" stop-color="#E3E6FF" stop-opacity="0"/>
+                </radialGradient>
+                <clipPath id="clip0_139_1786">
+                <rect width="42" height="42" fill="white" transform="translate(90.7742 15.1292)"/>
+                </clipPath>
+                </defs>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        <div class="pill" id="promoPill">
+          <span class="pill-text">Help us <br>launch your website faster</span>
+        </div>
+
+       <!-- <div class="subtext" id="promoSub">Faster, Smarter, and Easier</div>-->
+
+       </div>
+
+       <!-- Phase 2: bottom CTA over the same overlay -->
+       <div class="cta" id="cta">
+         <div class="cta-row">
+           <div class="cta-text">Tap to experience<br><span> Shopdeck AI</span></div>
+           <div class="cta-icon"></div>   <!-- the flying intro icon lands here -->
+         </div>
+
+         <div class="cta-buttons">
+           <button class="btn btn-dismiss" id="btnDismiss">Dismiss</button>
+           <button class="btn btn-try" id="btnTry">Give Feedback</button>
+         </div>
+       </div>
+      </div>
+
+
+    </div>
+
+  <script>
+    window.addEventListener("load", function () {
+      // Phase 1: intro overlay appears — icon rises + spins, heading fades in
+      setTimeout(function () {
+        document.getElementById("overlay").classList.add("play");
+      }, 1500);
+
+      // Promo pill + subtext: reveal ONCE (left -> right) after the icon lands,
+      // then stay put — they hide automatically when phase 2 begins.
+      setTimeout(function () {
+        var pill = document.getElementById("promoPill");
+        if (pill) pill.classList.add("reveal");
+        var sub = document.getElementById("promoSub");
+        if (sub) sub.classList.add("show");
+      }, 3400);   // ~1.9s after the overlay plays
+
+      // Phase 2: same overlay stays; content hides, icon moves to the bottom,
+      // CTA text + buttons fade in.
+      setTimeout(function () {
+        document.getElementById("screen").classList.add("mode2");
+        flyIconToBottom();
+      }, 6200);
+
+      // Buttons
+      var btnDismiss = document.getElementById("btnDismiss");
+      if (btnDismiss) btnDismiss.addEventListener("click", function () {
+        document.getElementById("overlay").classList.remove("play");
+      });
+    });
+
+    // "disappear text": wrap each character in a span (keeping <b>, <br>,
+    // .brand and word boundaries intact), then dissolve them one-by-one from
+    // the right — each letter blurs + fades out.
+    function disappearText(el, step) {
+      step = step || 40;
+      var charSpans = [];
+      (function walk(parent) {
+        [].slice.call(parent.childNodes).forEach(function (node) {
+          if (node.nodeType === 3) {                       // text node
+            var frag = document.createDocumentFragment();
+            node.textContent.split(/(\s+)/).forEach(function (part) {
+              if (part === "") return;
+              if (/^\s+$/.test(part)) {                    // keep spaces as wrap points
+                frag.appendChild(document.createTextNode(part));
+                return;
+              }
+              var word = document.createElement("span");   // keep words unbroken
+              word.style.display = "inline-block";
+              word.style.whiteSpace = "nowrap";
+              part.split("").forEach(function (ch) {
+                var s = document.createElement("span");
+                s.className = "dt-char";
+                s.textContent = ch;
+                word.appendChild(s);
+                charSpans.push(s);
+              });
+              frag.appendChild(word);
+            });
+            parent.replaceChild(frag, node);
+          } else if (node.nodeType === 1 && node.tagName !== "BR") {
+            walk(node);                                    // recurse into <b>, .brand
+          }
+        });
+      })(el);
+
+      var n = charSpans.length;
+      charSpans.forEach(function (s, i) {                  // rightmost/last char first
+        setTimeout(function () { s.classList.add("go"); }, (n - 1 - i) * step);
+      });
+    }
+
+    // Intro icon flies down to its resting slot in the bottom CTA.
+    function flyIconToBottom() {
+      var flyIcon = document.querySelector(".ai-rise");   // spinning icon (stays on top)
+      var stage   = document.querySelector(".stage");     // stable, non-rotating source box
+      var target  = document.querySelector(".cta-icon");  // resting spot in the bottom CTA
+      if (!flyIcon || !stage || !target) return;
+
+      // pin the icon where the intro left it, cancelling the entrance animation
+      flyIcon.style.animation = "none";
+      flyIcon.style.opacity = "1";
+      flyIcon.style.transformOrigin = "center center";
+      flyIcon.style.transform = "translate(0px, 0px) scale(1)";
+      flyIcon.getBoundingClientRect();
+
+      var t = target.getBoundingClientRect();
+      var f = stage.getBoundingClientRect();
+      var dx = (t.left + t.width / 2) - (f.left + f.width / 2);
+      var dy = (t.top + t.height / 2) - (f.top + f.height / 2);
+      var scale = 40 / 70;   // shrink the 70px intro icon down to 40px as it lands
+
+      flyIcon.style.transition = "transform 1.0s cubic-bezier(0.4, 0, 0.2, 1)";
+      setTimeout(function () {
+        flyIcon.style.transform =
+          "translate(" + dx + "px, " + dy + "px) scale(" + scale + ")";
+      }, 30);
+    }
+  </script>
+</body>
+</html>
